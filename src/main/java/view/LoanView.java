@@ -1,278 +1,358 @@
 package view;
 
-import com.library.model.Book;
-import com.library.model.Loan;
-import com.library.model.User;
-import controller.LoanController;
-
-import java.io.File;
-import java.util.List;
-import java.time.LocalDateTime;
+import controller.*;
+import com.library.model.*;
 
 import javax.swing.*;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 public class LoanView extends JPanel {
-    private JTable loanTable;
-    private DefaultTableModel tableModel;
-    private LoanController controller;
-    private JComboBox<Book> bookComboBox;
-    private JComboBox<User> userComboBox;
+    private final LoanController loanController;
+    private final BookController bookController;
+    private final UserController userController;
 
-    public LoanView() {
-        initializeComponents();
-    }
+    private final JTable loanTable;
+    private final DefaultTableModel tableModel;
+    private final JComboBox<String> filterCombo;
+    private final JTextField searchField;
+    private final DateTimeFormatter dateFormatter;
 
-    private void initializeComponents() {
-        // Main layout
+    public LoanView(LoanController loanController, BookController bookController,
+                    UserController userController) {
+        this.loanController = loanController;
+        this.bookController = bookController;
+        this.userController = userController;
+        this.dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
         setLayout(new BorderLayout(10, 10));
+        setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // Loan table
-        String[] columns = {"ID", "Book Title", "User Name", "Loan Date", "Due Date", "Return Date", "Penalties", "Status"};
+        // Initialize components
+        String[] columns = {
+                "Loan ID", "Book Title", "Member Name", "Loan Date",
+                "Due Date", "Return Date", "Penalty", "Status"
+        };
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false; // Make table read-only
+                return false;
             }
         };
         loanTable = new JTable(tableModel);
-        loanTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        loanTable.getColumnModel().getColumn(0).setPreferredWidth(50);  // ID
-        loanTable.getColumnModel().getColumn(1).setPreferredWidth(200); // Book Title
-        loanTable.getColumnModel().getColumn(2).setPreferredWidth(150); // User Name
-        loanTable.getColumnModel().getColumn(3).setPreferredWidth(120); // Loan Date
-        loanTable.getColumnModel().getColumn(4).setPreferredWidth(120); // Due Date
-        loanTable.getColumnModel().getColumn(5).setPreferredWidth(120); // Return Date
-        loanTable.getColumnModel().getColumn(6).setPreferredWidth(80);  // Penalties
-        loanTable.getColumnModel().getColumn(7).setPreferredWidth(80);  // Status
+        filterCombo = new JComboBox<>(new String[]{
+                "All Loans", "Active Loans", "Overdue Loans", "Returned"
+        });
+        searchField = new JTextField(20);
 
-        // Top panel for filters
-        JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JTextField searchField = new JTextField(20);
+        initializeUI();
+        refreshLoanTable();
+    }
+
+    private void initializeUI() {
+        // Top Panel - Search and Filter
+        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        topPanel.add(new JLabel("Search:"));
+        topPanel.add(searchField);
         JButton searchButton = new JButton("Search");
-        JComboBox<String> statusFilter = new JComboBox<>(new String[]{"All", "Active", "Returned", "Overdue"});
+        searchButton.addActionListener(e -> performSearch());
+        topPanel.add(searchButton);
+        //live search
+        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                performSearch();
+            }
 
-        filterPanel.add(new JLabel("Search:"));
-        filterPanel.add(searchField);
-        filterPanel.add(searchButton);
-        filterPanel.add(new JLabel("Status:"));
-        filterPanel.add(statusFilter);
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                performSearch();
+            }
 
-        // Button panel
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                performSearch();
+            }
+        });
+
+        topPanel.add(Box.createHorizontalStrut(20));
+        topPanel.add(new JLabel("Filter:"));
+        topPanel.add(filterCombo);
+        filterCombo.addActionListener(e -> refreshLoanTable());
+
+        add(topPanel, BorderLayout.NORTH);
+
+        // Center Panel - Loan Table
+        configureLoanTable();
+        JScrollPane scrollPane = new JScrollPane(loanTable);
+        scrollPane.setPreferredSize(new Dimension(800, 400));
+        add(scrollPane, BorderLayout.CENTER);
+
+        // Bottom Panel - Action Buttons
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         JButton createLoanButton = new JButton("Create New Loan");
         JButton returnBookButton = new JButton("Return Book");
         JButton viewDetailsButton = new JButton("View Details");
-        JButton exportButton = new JButton("Export to CSV");
+
+        createLoanButton.addActionListener(e -> showCreateLoanDialog());
+        returnBookButton.addActionListener(e -> handleBookReturn());
+        viewDetailsButton.addActionListener(e -> showLoanDetails());
 
         buttonPanel.add(createLoanButton);
         buttonPanel.add(returnBookButton);
         buttonPanel.add(viewDetailsButton);
-        buttonPanel.add(exportButton);
-
-        // Add action listeners
-        createLoanButton.addActionListener(e -> showCreateLoanDialog());
-        returnBookButton.addActionListener(e -> returnSelectedBook());
-        viewDetailsButton.addActionListener(e -> showLoanDetails());
-        exportButton.addActionListener(e -> exportToCSV());
-        searchButton.addActionListener(e -> searchLoans(searchField.getText()));
-        statusFilter.addActionListener(e -> filterByStatus((String) statusFilter.getSelectedItem()));
-
-        // Layout
-        add(filterPanel, BorderLayout.NORTH);
-        add(new JScrollPane(loanTable), BorderLayout.CENTER);
         add(buttonPanel, BorderLayout.SOUTH);
-
-        // Initialize comboboxes for later use
-        bookComboBox = new JComboBox<>();
-        userComboBox = new JComboBox<>();
     }
 
-    public void setController(LoanController controller) {
-        this.controller = controller;
+    private void configureLoanTable() {
+        loanTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        loanTable.getColumnModel().getColumn(0).setPreferredWidth(100); // Loan ID
+        loanTable.getColumnModel().getColumn(1).setPreferredWidth(200); // Book Title
+        loanTable.getColumnModel().getColumn(2).setPreferredWidth(150); // Member Name
+        loanTable.getColumnModel().getColumn(3).setPreferredWidth(100); // Loan Date
+        loanTable.getColumnModel().getColumn(4).setPreferredWidth(100); // Due Date
+        loanTable.getColumnModel().getColumn(5).setPreferredWidth(100); // Return Date
+        loanTable.getColumnModel().getColumn(6).setPreferredWidth(80);  // Penalty
+        loanTable.getColumnModel().getColumn(7).setPreferredWidth(80);  // Status
     }
 
-    public void refreshLoanList(List<Loan> loans) {
+    private void refreshLoanTable() {
         tableModel.setRowCount(0);
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+        List<Loan> loans;
+
+        String filter = (String) filterCombo.getSelectedItem();
+        switch (filter) {
+            case "Active Loans":
+                loans = loanController.getActiveLoans();
+                break;
+            case "Overdue Loans":
+                loans = loanController.getOverdueLoans();
+                break;
+            case "Returned":
+                loans = loanController.getAllLoans().stream()
+                        .filter(loan -> loan.getReturnDate() != null)
+                        .collect(java.util.stream.Collectors.toList());
+                break;
+            default:
+                loans = loanController.getAllLoans();
+        }
 
         for (Loan loan : loans) {
-            String status = determineStatus(loan);
-            String returnDate = loan.getReturnDate() != null ?
-                    loan.getReturnDate().format(formatter) : "-";
-            String penalties = loan.getPenalties() > 0 ?
-                    String.format("$%.2f", loan.getPenalties()) : "-";
-
-            tableModel.addRow(new Object[]{
-                    loan.getId(),
-                    loan.getBook().getTitle(),
-                    loan.getUser().getName(),
-                    loan.getLoanDate().format(formatter),
-                    loan.getDueDate().format(formatter),
-                    returnDate,
-                    penalties,
-                    status
-            });
+            addLoanToTable(loan);
         }
+    }
+//"Loan ID", "Book Title", "Member Name", "Loan Date", "Due Date", "Return Date", "Penalty", "Status"
+    private void addLoanToTable(Loan loan) {
+        String status = determineStatus(loan);
+        Object[] row = {
+                loan.getId(),
+                loan.getBook().getTitle(),
+                loan.getUser().getUsername(),
+                loan.getLoanDate().format(dateFormatter),
+                loan.getDueDate().format(dateFormatter),
+                loan.getReturnDate() != null ? loan.getReturnDate().format(dateFormatter) : "-",
+                String.format("$%.2f", loan.getPenalty()),
+                status
+        };
+        tableModel.addRow(row);
     }
 
     private String determineStatus(Loan loan) {
         if (loan.getReturnDate() != null) {
             return "Returned";
-        } else if (LocalDateTime.now().isAfter(loan.getDueDate())) {
-            return "Overdue";
-        } else {
-            return "Active";
         }
+        return LocalDate.now().isAfter(loan.getDueDate()) ? "Overdue" : "Active";
     }
 
-    public void updateBookList(List<Book> availableBooks) {
-        bookComboBox.removeAllItems();
-        for (Book book : availableBooks) {
-            if (book.isAvailable()) {
-                bookComboBox.addItem(book);
-            }
+    private void performSearch() {
+        String searchTerm = searchField.getText().toLowerCase().trim();
+        if (searchTerm.isEmpty()) {
+            refreshLoanTable();
+            return;
         }
-    }
 
-    public void updateUserList(List<User> users) {
-        userComboBox.removeAllItems();
-        for (User user : users) {
-            userComboBox.addItem(user);
-        }
+        tableModel.setRowCount(0);
+        loanController.getAllLoans().stream()
+                .filter(loan -> {
+                    try {
+                        return (loan.getBook() != null && loan.getBook().getTitle() != null
+                                && loan.getBook().getTitle().toLowerCase().contains(searchTerm))
+                                || (loan.getUser() != null && loan.getUser().getUsername() != null
+                                && loan.getUser().getUsername().toLowerCase().contains(searchTerm))
+                                || (loan.getId() != null && loan.getId().toLowerCase().contains(searchTerm));
+                    } catch (NullPointerException e) {
+                        return false;
+                    }
+                })
+                .forEach(this::addLoanToTable);
     }
 
     private void showCreateLoanDialog() {
-        if (bookComboBox.getItemCount() == 0 || userComboBox.getItemCount() == 0) {
-            showError("No available books or users found");
-            return;
-        }
+        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this),
+                "Create New Loan", true);
+        dialog.setLayout(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        JPanel panel = new JPanel(new GridLayout(2, 2, 5, 5));
-        panel.add(new JLabel("Select Book:"));
-        panel.add(bookComboBox);
-        panel.add(new JLabel("Select User:"));
-        panel.add(userComboBox);
+        // Get available books and members
+        List<Book> availableBooks = bookController.getAvailableBooks();
+        List<User> members = userController.getAllUsers().stream()
+                .filter(user -> user.getRole() == User.UserRole.MEMBER)
+                .collect(java.util.stream.Collectors.toList());
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Create New Loan",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+        // Create combo boxes
+        JComboBox<Book> bookCombo = new JComboBox<>(
+                availableBooks.toArray(new Book[0]));
+        JComboBox<User> memberCombo = new JComboBox<>(
+                members.toArray(new User[0]));
 
-        if (result == JOptionPane.OK_OPTION) {
-            Book selectedBook = (Book) bookComboBox.getSelectedItem();
-            User selectedUser = (User) userComboBox.getSelectedItem();
+        // Add components
+        gbc.gridx = 0; gbc.gridy = 0;
+        dialog.add(new JLabel("Select Book:"), gbc);
+        gbc.gridx = 1;
+        dialog.add(bookCombo, gbc);
 
-            if (selectedBook != null && selectedUser != null) {
-                controller.createLoan(selectedBook, selectedUser);
+        gbc.gridx = 0; gbc.gridy = 1;
+        dialog.add(new JLabel("Select Member:"), gbc);
+        gbc.gridx = 1;
+        dialog.add(memberCombo, gbc);
+
+        // Create Loan button
+        JButton createButton = new JButton("Create Loan");
+        createButton.addActionListener(e -> {
+            try {
+                Book selectedBook = (Book) bookCombo.getSelectedItem();
+                User selectedMember = (User) memberCombo.getSelectedItem();
+
+                if (selectedBook != null && selectedMember != null) {
+                    loanController.createLoan(selectedBook.getId(), selectedMember.getId());
+                    refreshLoanTable();
+                    dialog.dispose();
+                } else {
+                    JOptionPane.showMessageDialog(dialog,
+                            "Please select both a book and a member",
+                            "Input Required",
+                            JOptionPane.WARNING_MESSAGE);
+                }
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(dialog,
+                        "Error creating loan: " + ex.getMessage(),
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
             }
-        }
+        });
+
+        gbc.gridx = 0; gbc.gridy = 2;
+        gbc.gridwidth = 2;
+        dialog.add(createButton, gbc);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
-    private void returnSelectedBook() {
+    private void handleBookReturn() {
         int selectedRow = loanTable.getSelectedRow();
         if (selectedRow == -1) {
-            showError("Please select a loan to return");
+            JOptionPane.showMessageDialog(this,
+                    "Please select a loan to return",
+                    "Selection Required",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        String status = (String) loanTable.getValueAt(selectedRow, 7);
+        String loanId = (String) tableModel.getValueAt(selectedRow, 0);
+        String status = (String) tableModel.getValueAt(selectedRow, 7);
+
         if ("Returned".equals(status)) {
-            showError("This book has already been returned");
+            JOptionPane.showMessageDialog(this,
+                    "This book has already been returned",
+                    "Already Returned",
+                    JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
-        int loanId = (int) loanTable.getValueAt(selectedRow, 0);
-        String bookTitle = (String) loanTable.getValueAt(selectedRow, 1);
-
-        int confirm = JOptionPane.showConfirmDialog(
-                this,
-                "Confirm return of book: " + bookTitle + "?",
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Are you sure you want to return this book?",
                 "Confirm Return",
-                JOptionPane.YES_NO_OPTION
-        );
+                JOptionPane.YES_NO_OPTION);
 
         if (confirm == JOptionPane.YES_OPTION) {
-            controller.returnBook(loanId);
+            try {
+                loanController.returnLoan(loanId);
+                refreshLoanTable();
+                JOptionPane.showMessageDialog(this,
+                        "Book returned successfully",
+                        "Success",
+                        JOptionPane.INFORMATION_MESSAGE);
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error returning book: " + e.getMessage(),
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
     private void showLoanDetails() {
         int selectedRow = loanTable.getSelectedRow();
         if (selectedRow == -1) {
-            showError("Please select a loan to view details");
+            JOptionPane.showMessageDialog(this,
+                    "Please select a loan to view details",
+                    "Selection Required",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        StringBuilder details = new StringBuilder();
-        details.append("Loan Details:\n\n");
-        details.append("Loan ID: ").append(loanTable.getValueAt(selectedRow, 0)).append("\n");
-        details.append("Book: ").append(loanTable.getValueAt(selectedRow, 1)).append("\n");
-        details.append("Borrower: ").append(loanTable.getValueAt(selectedRow, 2)).append("\n");
-        details.append("Loan Date: ").append(loanTable.getValueAt(selectedRow, 3)).append("\n");
-        details.append("Due Date: ").append(loanTable.getValueAt(selectedRow, 4)).append("\n");
-        details.append("Return Date: ").append(loanTable.getValueAt(selectedRow, 5)).append("\n");
-        details.append("Penalties: ").append(loanTable.getValueAt(selectedRow, 6)).append("\n");
-        details.append("Status: ").append(loanTable.getValueAt(selectedRow, 7)).append("\n");
+        // Get loan details from the selected row
+        String loanId = (String) tableModel.getValueAt(selectedRow, 0);
+        String bookTitle = (String) tableModel.getValueAt(selectedRow, 1);
+        String memberName = (String) tableModel.getValueAt(selectedRow, 2);
+        String loanDate = (String) tableModel.getValueAt(selectedRow, 3);
+        String dueDate = (String) tableModel.getValueAt(selectedRow, 4);
+        String returnDate = (String) tableModel.getValueAt(selectedRow, 5);
+        String penalty = (String) tableModel.getValueAt(selectedRow, 6);
+        String status = (String) tableModel.getValueAt(selectedRow, 7);
 
-        JTextArea textArea = new JTextArea(details.toString());
-        textArea.setEditable(false);
-        textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        // Create and show details dialog
+        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this),
+                "Loan Details", true);
+        dialog.setLayout(new BorderLayout(10, 10));
 
-        JScrollPane scrollPane = new JScrollPane(textArea);
-        scrollPane.setPreferredSize(new Dimension(400, 300));
+        JPanel detailsPanel = new JPanel(new GridLayout(8, 2, 5, 5));
+        detailsPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        JOptionPane.showMessageDialog(
-                this,
-                scrollPane,
-                "Loan Details",
-                JOptionPane.INFORMATION_MESSAGE
-        );
+        addDetailField(detailsPanel, "Loan ID:", loanId);
+        addDetailField(detailsPanel, "Book:", bookTitle);
+        addDetailField(detailsPanel, "Member:", memberName);
+        addDetailField(detailsPanel, "Loan Date:", loanDate);
+        addDetailField(detailsPanel, "Due Date:", dueDate);
+        addDetailField(detailsPanel, "Return Date:", returnDate.isEmpty() ? "Not returned" : returnDate);
+        addDetailField(detailsPanel, "Penalty:", penalty);
+        addDetailField(detailsPanel, "Status:", status);
+
+        dialog.add(detailsPanel, BorderLayout.CENTER);
+
+        JButton closeButton = new JButton("Close");
+        closeButton.addActionListener(e -> dialog.dispose());
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttonPanel.add(closeButton);
+        dialog.add(buttonPanel, BorderLayout.SOUTH);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
-    private void searchLoans(String query) {
-        controller.searchLoans(query);
+    private void addDetailField(JPanel panel, String label, String value) {
+        panel.add(new JLabel(label, SwingConstants.RIGHT));
+        panel.add(new JLabel(value, SwingConstants.LEFT));
     }
 
-    private void filterByStatus(String status) {
-        controller.filterLoansByStatus(status);
-    }
 
-    private void exportToCSV() {
-        JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setDialogTitle("Save Loan Report");
-        fileChooser.setFileFilter(new FileNameExtensionFilter("CSV Files", "csv"));
 
-        if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-            File file = fileChooser.getSelectedFile();
-            if (!file.getName().toLowerCase().endsWith(".csv")) {
-                file = new File(file.getParentFile(), file.getName() + ".csv");
-            }
-            controller.exportLoansToCSV(file);
-        }
-    }
-
-    public void showError(String message) {
-        JOptionPane.showMessageDialog(
-                this,
-                message,
-                "Error",
-                JOptionPane.ERROR_MESSAGE
-        );
-    }
-
-    public void showSuccess(String message) {
-        JOptionPane.showMessageDialog(
-                this,
-                message,
-                "Success",
-                JOptionPane.INFORMATION_MESSAGE
-        );
-    }
 }

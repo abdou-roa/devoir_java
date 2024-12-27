@@ -1,179 +1,156 @@
 package controller;
 
-import com.library.model.Book;
-import com.library.model.Loan;
-import com.library.model.User;
-import view.LoanView;
-
-import java.io.File;
+import com.library.model.*;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.time.LocalDateTime;
 import java.util.stream.Collectors;
+import java.util.*;
+import java.time.LocalDate;
+import java.io.*;
 
 public class LoanController {
-    private LoanView view;
-    private List<Loan> loans;
-    private List<Loan> filteredLoans; // To maintain the current filtered state
+    private final Map<String, Loan> loans;
+    private final BookController bookController;
+    private final UserController userController;
+    private static final String LOANS_CSV = "loans.csv";
 
-    public LoanController(LoanView view) {
-        this.view = view;
-        this.loans = new ArrayList<>();
-        this.filteredLoans = new ArrayList<>();
+    public LoanController(BookController bookController, UserController userController) {
+        this.loans = new HashMap<>();
+        this.bookController = bookController;
+        this.userController = userController;
+        loadLoans();
     }
 
-    public void createLoan(Book book, User user) {
-        if (!book.isAvailable()) {
-            view.showError("Book is not available");
-            return;
-        }
-        Loan loan = new Loan(generateId(), book, user);
-        book.setAvailable(false);
-        loans.add(loan);
-        user.getLoans().add(loan);
-        refreshView();
-        view.showSuccess("Loan created successfully");
-    }
+    private void loadLoans() {
+        try (BufferedReader reader = new BufferedReader(new FileReader(LOANS_CSV))) {
+            String line;
+            reader.readLine(); // Skip header
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(",");
+                Book book = bookController.getBook(parts[1]);
+                User user = userController.getUser(parts[2]);
 
-    public void returnBook(int loanId) {
-        loans.stream()
-                .filter(l -> l.getId() == loanId)
-                .findFirst()
-                .ifPresent(loan -> {
-                    loan.setReturnDate(LocalDateTime.now());
-                    loan.getBook().setAvailable(true);
-                    calculatePenalties(loan);
-                    refreshView();
-                    view.showSuccess("Book returned successfully");
-                });
-    }
-
-    public void searchLoans(String query) {
-        if (query == null || query.trim().isEmpty()) {
-            filteredLoans = new ArrayList<>(loans);
-        } else {
-            query = query.toLowerCase().trim();
-            String finalQuery = query;
-            filteredLoans = loans.stream()
-                    .filter(loan ->
-                            loan.getBook().getTitle().toLowerCase().contains(finalQuery) ||
-                                    loan.getUser().getName().toLowerCase().contains(finalQuery) ||
-                                    String.valueOf(loan.getId()).contains(finalQuery))
-                    .collect(Collectors.toList());
-        }
-        view.refreshLoanList(filteredLoans);
-    }
-
-    public void filterLoansByStatus(String status) {
-        if (status == null || status.equals("All")) {
-            filteredLoans = new ArrayList<>(loans);
-        } else {
-            filteredLoans = loans.stream()
-                    .filter(loan -> {
-                        switch (status) {
-                            case "Active":
-                                return loan.getReturnDate() == null &&
-                                        !LocalDateTime.now().isAfter(loan.getDueDate());
-                            case "Returned":
-                                return loan.getReturnDate() != null;
-                            case "Overdue":
-                                return loan.getReturnDate() == null &&
-                                        LocalDateTime.now().isAfter(loan.getDueDate());
-                            default:
-                                return true;
-                        }
-                    })
-                    .collect(Collectors.toList());
-        }
-        view.refreshLoanList(filteredLoans);
-    }
-
-    public void exportLoansToCSV(File file) {
-        try {
-            List<String> lines = new ArrayList<>();
-
-            // Add header
-            lines.add("Loan ID,Book Title,User Name,Loan Date,Due Date,Return Date,Penalties,Status");
-
-            // Add data
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-            for (Loan loan : filteredLoans) {
-                String line = String.format("%d,%s,%s,%s,%s,%s,%.2f,%s",
-                        loan.getId(),
-                        escapeCsvField(loan.getBook().getTitle()),
-                        escapeCsvField(loan.getUser().getName()),
-                        loan.getLoanDate().format(formatter),
-                        loan.getDueDate().format(formatter),
-                        loan.getReturnDate() != null ? loan.getReturnDate().format(formatter) : "",
-                        loan.getPenalties(),
-                        getLoanStatus(loan)
-                );
-                lines.add(line);
+                if (book != null && user != null) {
+                    Loan loan = new Loan(parts[0], book, user);
+                    loans.put(loan.getId(), loan);
+                    user.addLoan(loan);
+                }
             }
-
-            // Write to file using Files.write
-            Files.write(file.toPath(), lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            view.showSuccess("Loans exported successfully");
-
         } catch (IOException e) {
-            view.showError("Error exporting loans: " + e.getMessage());
+            System.err.println("Error loading loans: " + e.getMessage());
         }
     }
 
-    private String escapeCsvField(String field) {
-        if (field == null) {
-            return "";
+    private void saveLoans() {
+        try (PrintWriter writer = new PrintWriter(new FileWriter(LOANS_CSV))) {
+            writer.println("id,bookId,userId,loanDate,dueDate,returnDate,penalty");
+            for (Loan loan : loans.values()) {
+                writer.printf("%s,%s,%s,%s,%s,%s,%.2f%n",
+                        loan.getId(),
+                        loan.getBook().getId(),
+                        loan.getUser().getId(),
+                        loan.getLoanDate(),
+                        loan.getDueDate(),
+                        loan.getReturnDate() != null ? loan.getReturnDate() : "",
+                        loan.getPenalty()
+                );
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving loans: " + e.getMessage());
         }
-        // Escape quotes and wrap in quotes if the field contains comma or quotes
-        if (field.contains("\"") || field.contains(",")) {
-            return "\"" + field.replace("\"", "\"\"") + "\"";
-        }
-        return field;
     }
 
-    private String getLoanStatus(Loan loan) {
+    public Loan createLoan(String bookId, String userId) {
+        Book book = bookController.getBook(bookId);
+        User user = userController.getUser(userId);
+
+        System.out.println("quantity:" + book.getQuantity());
+
+        if (book == null || user == null) {
+            throw new IllegalArgumentException("Book or user not found");
+        }
+
+        if (book.getQuantity() <= 0) {
+            throw new IllegalStateException("Book is not available");
+        }
+
+        String id = UUID.randomUUID().toString();
+        Loan loan = new Loan(id, book, user);
+        loans.put(id, loan);
+        user.addLoan(loan);
+        book.setQuantity(book.getQuantity() - 1);
+        bookController.updateBook(book);
+        saveLoans();
+        return loan;
+    }
+
+    public void returnLoan(String loanId) {
+        Loan loan = loans.get(loanId);
+        if (loan == null) {
+            throw new IllegalArgumentException("Loan not found");
+        }
+
         if (loan.getReturnDate() != null) {
-            return "Returned";
-        } else if (LocalDateTime.now().isAfter(loan.getDueDate())) {
-            return "Overdue";
-        } else {
-            return "Active";
+            throw new IllegalStateException("Book already returned");
         }
+
+        loan.returnBook();
+        Book book = loan.getBook();
+        book.setQuantity(book.getQuantity() + 1);
+
+        saveLoans();
     }
 
-
-    private void calculatePenalties(Loan loan) {
-        if (loan.getReturnDate().isAfter(loan.getDueDate())) {
-            long daysLate = ChronoUnit.DAYS.between(loan.getDueDate(), loan.getReturnDate());
-            loan.setPenalties(daysLate * 1.0); // $1 per day
-        }
+    public List<Loan> getActiveLoans() {
+        return loans.values().stream()
+                .filter(loan -> loan.getReturnDate() == null)
+                .collect(Collectors.toList());
     }
 
-//    private String getLoanStatus(Loan loan) {
-//        if (loan.getReturnDate() != null) {
-//            return "Returned";
-//        } else if (LocalDateTime.now().isAfter(loan.getDueDate())) {
-//            return "Overdue";
-//        } else {
-//            return "Active";
-//        }
-//    }
-
-    private void refreshView() {
-        // Reapply current filters
-        if (filteredLoans.isEmpty()) {
-            view.refreshLoanList(loans);
-        } else {
-            view.refreshLoanList(filteredLoans);
-        }
+    public List<Loan> getOverdueLoans() {
+        LocalDate today = LocalDate.now();
+        return loans.values().stream()
+                .filter(loan ->
+                        loan.getReturnDate() == null &&
+                                loan.getDueDate().isBefore(today))
+                .collect(Collectors.toList());
     }
 
-    private int generateId() {
-        return loans.size() + 1;
+    public List<Loan> getUserLoans(String userId) {
+        return loans.values().stream()
+                .filter(loan -> loan.getUser().getId().equals(userId))
+                .collect(Collectors.toList());
+    }
+
+    public double calculateTotalPenalties(String userId) {
+        return getUserLoans(userId).stream()
+                .mapToDouble(Loan::getPenalty)
+                .sum();
+    }
+
+    public List<Loan> getAllLoans() {
+        List<Loan> loans = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader("loans.csv"))) {
+            String line;
+            reader.readLine(); // Skip header
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(",");
+                String id = parts[0];
+                Book book = bookController.getBook(parts[1]); // bookId
+                User user = userController.getUser(parts[2]); // userId
+                LocalDate loanDate = LocalDate.parse(parts[3]);
+                LocalDate dueDate = LocalDate.parse(parts[4]);
+                LocalDate returnDate = parts[5].isEmpty() ? null : LocalDate.parse(parts[5]);
+                double penalty = Double.parseDouble(parts[6]);
+
+                Loan loan = new Loan(id, book, user, loanDate, dueDate, returnDate, penalty);
+                // Set additional properties
+                loans.add(loan);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading loans: " + e.getMessage());
+        }
+        return loans;
     }
 }

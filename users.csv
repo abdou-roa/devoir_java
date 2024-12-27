@@ -1,0 +1,5 @@
+id,username,password,fullName,cin,phoneNumber,address,role
+46d58fa9-1224-42ae-a92e-fd2b01185baf,lib,lib123,amini alaoui abdellah,u204566,0684777355,17 Lot. la province errachidia,LIBRARIAN
+7ef3496d-3768-4b68-8c9f-261b44fa94c2,ayman,,benhlal,a1212,099827362,asdasdasd,MEMBER
+0d545945-2a5b-4b3f-aa3e-a3bca2cbeae7,safaeDA,,safaeDADI,ab1231,0998989342,layayda,MEMBER
+555d6448-7c27-47d1-991b-714672e1d52a,admin,admin123,Administrator,ADMIN1,0123456789,Library HQ,ADMIN

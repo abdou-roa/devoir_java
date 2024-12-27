@@ -1,191 +1,357 @@
 package view;
-import com.library.model.Book;
+
 import controller.BookController;
-
-import java.util.List;
-
+import com.library.model.Book;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import javax.swing.event.DocumentListener;
+import javax.swing.event.DocumentEvent;
+import javax.swing.Timer;
+
+import java.util.List;
 
 public class BookView extends JPanel {
-    private JTextField searchField;
-    private JTable bookTable;
-    private DefaultTableModel tableModel;
-    private BookController controller;
+    private final BookController bookController;
+    private final JTable bookTable;
+    private final DefaultTableModel tableModel;
+    private final JTextField searchField;
+    private final JComboBox<String> filterCombo;
+    private final JButton addButton;
+    private final JButton editButton;
+    private final JButton deleteButton;
 
-    public BookView() {
-        initializeComponents();
-    }
+    public BookView(BookController bookController) {
+        this.bookController = bookController;
+        setLayout(new BorderLayout(10, 10));
+        setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-    private void initializeComponents() {
-        // Search panel
-        JPanel searchPanel = new JPanel();
-        searchField = new JTextField(20);
-        JButton searchButton = new JButton("Search");
-        searchButton.addActionListener(e -> controller.searchBooks(searchField.getText()));
-        searchPanel.add(new JLabel("Search:"));
-        searchPanel.add(searchField);
-        searchPanel.add(searchButton);
-
-        // Book table
-        String[] columns = {"ID", "Title", "Author", "Year", "Genre", "Available"};
+        // Initialize components
+        String[] columns = {"ID", "Title", "Author", "Year", "Genre", "Quantity", "Available"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false; // Make table read-only
+                return false;
             }
         };
         bookTable = new JTable(tableModel);
-        bookTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        searchField = new JTextField(20);
+        filterCombo = new JComboBox<>(new String[]{"All Books", "Available Books", "Out of Stock"});
+        addButton = new JButton("Add Book");
+        editButton = new JButton("Edit Book");
+        deleteButton = new JButton("Delete Book");
 
-        // Buttons panel
-        JPanel buttonPanel = new JPanel();
-        JButton addButton = new JButton("Add Book");
-        JButton editButton = new JButton("Edit Book");
-        JButton deleteButton = new JButton("Delete Book");
-        addButton.addActionListener(e -> showAddBookDialog());
-        editButton.addActionListener(e -> showEditBookDialog());
-        deleteButton.addActionListener(e -> deleteSelectedBook());
+        initializeUI();
+        setupSearchField();
+        addListeners();
+        refreshBookTable();
+    }
+
+    private void initializeUI() {
+        // Search Panel (Top)
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        searchPanel.add(new JLabel("Search:"));
+        searchPanel.add(searchField);
+        searchPanel.add(new JLabel("Filter:"));
+        searchPanel.add(filterCombo);
+        JButton searchButton = new JButton("Search");
+        searchButton.addActionListener(e -> performSearch());
+        searchPanel.add(searchButton);
+        add(searchPanel, BorderLayout.NORTH);
+
+        // Table Panel (Center)
+        bookTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        bookTable.getColumnModel().getColumn(0).setPreferredWidth(50);  // ID
+        bookTable.getColumnModel().getColumn(1).setPreferredWidth(200); // Title
+        bookTable.getColumnModel().getColumn(2).setPreferredWidth(150); // Author
+        bookTable.getColumnModel().getColumn(3).setPreferredWidth(70);  // Year
+        bookTable.getColumnModel().getColumn(4).setPreferredWidth(100); // Genre
+        bookTable.getColumnModel().getColumn(5).setPreferredWidth(70);  // Quantity
+        bookTable.getColumnModel().getColumn(6).setPreferredWidth(70);  // Available
+
+        JScrollPane scrollPane = new JScrollPane(bookTable);
+        scrollPane.setPreferredSize(new Dimension(800, 400));
+        add(scrollPane, BorderLayout.CENTER);
+
+        // Button Panel (Bottom)
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         buttonPanel.add(addButton);
         buttonPanel.add(editButton);
         buttonPanel.add(deleteButton);
-
-        // Layout
-        setLayout(new BorderLayout());
-        add(searchPanel, BorderLayout.NORTH);
-        add(new JScrollPane(bookTable), BorderLayout.CENTER);
         add(buttonPanel, BorderLayout.SOUTH);
     }
 
-    public void setController(BookController controller) {
-        this.controller = controller;
+    private void addListeners() {
+        addButton.addActionListener(e -> showAddBookDialog());
+        editButton.addActionListener(e -> showEditBookDialog());
+        deleteButton.addActionListener(e -> deleteSelectedBook());
+        filterCombo.addActionListener(e -> refreshBookTable());
+
+        searchField.addActionListener(e -> performSearch());
     }
 
-    public void displaySearchResults(List<Book> books) {
+    private void refreshBookTable() {
         tableModel.setRowCount(0);
+        List<Book> books;
+
+        String filter = (String) filterCombo.getSelectedItem();
+        if ("Available Books".equals(filter)) {
+            books = bookController.getAvailableBooks();
+        } else if ("Out of Stock".equals(filter)) {
+            books = bookController.getAllBooks();
+            books.removeIf(Book::isAvailable);
+        } else {
+            books = bookController.getAllBooks();
+        }
+
         for (Book book : books) {
-            tableModel.addRow(new Object[]{
+            Object[] row = {
                     book.getId(),
                     book.getTitle(),
                     book.getAuthor(),
                     book.getPublicationYear(),
                     book.getGenre(),
-                    book.isAvailable() ? "Available" : "Checked Out"
-            });
+                    book.getQuantity(),
+                    book.isAvailable() ? "Yes" : "No"
+            };
+            tableModel.addRow(row);
         }
     }
 
-    public void refreshBookList(List<Book> books) {
-        displaySearchResults(books);
+    private Timer searchTimer;
+
+    private void setupSearchField() {
+        // Create a timer with a 300ms delay
+        searchTimer = new Timer(300, e -> performSearch());
+        searchTimer.setRepeats(false);
+
+        searchField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                searchTimer.restart();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                searchTimer.restart();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                searchTimer.restart();
+            }
+        });
+    }
+
+    private void performSearch() {
+        // Use SwingUtilities.invokeLater to prevent potential concurrency issues
+        SwingUtilities.invokeLater(() -> {
+            String searchTerm = searchField.getText().trim();
+            if (!searchTerm.isEmpty()) {
+                tableModel.setRowCount(0);
+                List<Book> books = bookController.searchBooks(searchTerm);
+                for (Book book : books) {
+                    Object[] row = {
+                            book.getId(),
+                            book.getTitle(),
+                            book.getAuthor(),
+                            book.getPublicationYear(),
+                            book.getGenre(),
+                            book.getQuantity(),
+                            book.isAvailable() ? "Yes" : "No"
+                    };
+                    tableModel.addRow(row);
+                }
+            } else {
+                refreshBookTable();
+            }
+        });
     }
 
     private void showAddBookDialog() {
-        JTextField titleField = new JTextField();
-        JTextField authorField = new JTextField();
-        JTextField yearField = new JTextField();
-        JTextField genreField = new JTextField();
+        String[] genres = {"Fiction", "Non-Fiction", "Science Fiction", "Fantasy", "Mystery", "Romance", "Horror"};
+        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Add Book", true);
+        dialog.setLayout(new GridBagLayout());
+        GridBagConstraints gbc = createDialogConstraints();
 
-        JPanel panel = new JPanel(new GridLayout(4, 2));
-        panel.add(new JLabel("Title:"));
-        panel.add(titleField);
-        panel.add(new JLabel("Author:"));
-        panel.add(authorField);
-        panel.add(new JLabel("Year:"));
-        panel.add(yearField);
-        panel.add(new JLabel("Genre:"));
-        panel.add(genreField);
+        // Create input fields
+        JTextField titleField = new JTextField(20);
+        JTextField authorField = new JTextField(20);
+        JTextField yearField = new JTextField(20);
+        JComboBox<String> genreComboBox = new JComboBox<>(genres);
+        JSpinner quantitySpinner = new JSpinner(new SpinnerNumberModel(1, 0, 999, 1));
 
-        int result = JOptionPane.showConfirmDialog(this, panel,
-                "Add New Book", JOptionPane.OK_CANCEL_OPTION);
+        // Add components to dialog
+        addDialogComponent(dialog, "Title:", titleField, gbc, 0);
+        addDialogComponent(dialog, "Author:", authorField, gbc, 1);
+        addDialogComponent(dialog, "Year:", yearField, gbc, 2);
+        addDialogComponent(dialog, "Genre:", genreComboBox, gbc, 3);
+        addDialogComponent(dialog, "Quantity:", quantitySpinner, gbc, 4);
 
-        if (result == JOptionPane.OK_OPTION) {
+        // Add save button
+        JButton saveButton = new JButton("Save");
+        saveButton.addActionListener(e -> {
             try {
-                controller.addBook(
+                int year = Integer.parseInt(yearField.getText());
+                int quantity = (Integer) quantitySpinner.getValue();
+
+                bookController.addBook(
                         titleField.getText(),
                         authorField.getText(),
-                        Integer.parseInt(yearField.getText()),
-                        genreField.getText()
+                        year,
+                        (String) genreComboBox.getSelectedItem(),
+                        quantity
                 );
-            } catch (NumberFormatException e) {
-                showError("Invalid year format");
+
+                refreshBookTable();
+                dialog.dispose();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(dialog,
+                        "Please enter valid numbers for year and quantity.",
+                        "Input Error",
+                        JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(dialog,
+                        ex.getMessage(),
+                        "Input Error",
+                        JOptionPane.ERROR_MESSAGE);
             }
-        }
+        });
+
+        gbc.gridwidth = 2;
+        gbc.gridx = 0;
+        gbc.gridy++;
+        dialog.add(saveButton, gbc);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
     private void showEditBookDialog() {
         int selectedRow = bookTable.getSelectedRow();
         if (selectedRow == -1) {
-            showError("Please select a book to edit");
+            JOptionPane.showMessageDialog(this,
+                    "Please select a book to edit",
+                    "Selection Required",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        int bookId = (int) bookTable.getValueAt(selectedRow, 0);
-        String currentTitle = (String) bookTable.getValueAt(selectedRow, 1);
-        String currentAuthor = (String) bookTable.getValueAt(selectedRow, 2);
-        int currentYear = (int) bookTable.getValueAt(selectedRow, 3);
-        String currentGenre = (String) bookTable.getValueAt(selectedRow, 4);
-
-        JTextField titleField = new JTextField(currentTitle);
-        JTextField authorField = new JTextField(currentAuthor);
-        JTextField yearField = new JTextField(String.valueOf(currentYear));
-        JTextField genreField = new JTextField(currentGenre);
-
-        JPanel panel = new JPanel(new GridLayout(4, 2));
-        panel.add(new JLabel("Title:"));
-        panel.add(titleField);
-        panel.add(new JLabel("Author:"));
-        panel.add(authorField);
-        panel.add(new JLabel("Year:"));
-        panel.add(yearField);
-        panel.add(new JLabel("Genre:"));
-        panel.add(genreField);
-
-        int result = JOptionPane.showConfirmDialog(this, panel,
-                "Edit Book", JOptionPane.OK_CANCEL_OPTION);
-
-        if (result == JOptionPane.OK_OPTION) {
-            try {
-                controller.updateBook(
-                        bookId,
-                        titleField.getText(),
-                        authorField.getText(),
-                        Integer.parseInt(yearField.getText()),
-                        genreField.getText()
-                );
-            } catch (NumberFormatException e) {
-                showError("Invalid year format");
-            }
+        String bookId = (String) tableModel.getValueAt(selectedRow, 0);
+        Book book = bookController.getBook(bookId);
+        if (book == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Book not found",
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
         }
+
+        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Edit Book", true);
+        dialog.setLayout(new GridBagLayout());
+        GridBagConstraints gbc = createDialogConstraints();
+
+        // Create input fields with existing values
+        JTextField titleField = new JTextField(book.getTitle(), 20);
+        JTextField authorField = new JTextField(book.getAuthor(), 20);
+        JTextField yearField = new JTextField(String.valueOf(book.getPublicationYear()), 20);
+        JTextField genreField = new JTextField(book.getGenre(), 20);
+        JSpinner quantitySpinner = new JSpinner(new SpinnerNumberModel(book.getQuantity(), 0, 999, 1));
+
+        // Add components to dialog
+        addDialogComponent(dialog, "Title:", titleField, gbc, 0);
+        addDialogComponent(dialog, "Author:", authorField, gbc, 1);
+        addDialogComponent(dialog, "Year:", yearField, gbc, 2);
+        addDialogComponent(dialog, "Genre:", genreField, gbc, 3);
+        addDialogComponent(dialog, "Quantity:", quantitySpinner, gbc, 4);
+
+        // Add save button
+        JButton saveButton = new JButton("Save Changes");
+        saveButton.addActionListener(e -> {
+            try {
+                book.setTitle(titleField.getText());
+                book.setAuthor(authorField.getText());
+                book.setPublicationYear(Integer.parseInt(yearField.getText()));
+                book.setGenre(genreField.getText());
+                book.setQuantity((Integer) quantitySpinner.getValue());
+
+                bookController.updateBook(book);
+                refreshBookTable();
+                dialog.dispose();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(dialog,
+                        "Please enter valid numbers for year and quantity.",
+                        "Input Error",
+                        JOptionPane.ERROR_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(dialog,
+                        ex.getMessage(),
+                        "Input Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        gbc.gridwidth = 2;
+        gbc.gridx = 0;
+        gbc.gridy++;
+        dialog.add(saveButton, gbc);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
     private void deleteSelectedBook() {
         int selectedRow = bookTable.getSelectedRow();
         if (selectedRow == -1) {
-            showError("Please select a book to delete");
+            JOptionPane.showMessageDialog(this,
+                    "Please select a book to delete",
+                    "Selection Required",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        int bookId = (int) bookTable.getValueAt(selectedRow, 0);
-        String bookTitle = (String) bookTable.getValueAt(selectedRow, 1);
+        String bookId = (String) tableModel.getValueAt(selectedRow, 0);
+        String bookTitle = (String) tableModel.getValueAt(selectedRow, 1);
 
-        int confirm = JOptionPane.showConfirmDialog(
-                this,
+        int confirm = JOptionPane.showConfirmDialog(this,
                 "Are you sure you want to delete the book: " + bookTitle + "?",
                 "Confirm Delete",
-                JOptionPane.YES_NO_OPTION
-        );
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
 
         if (confirm == JOptionPane.YES_OPTION) {
-            controller.deleteBook(bookId);
+            try {
+                bookController.deleteBook(bookId);
+                refreshBookTable();
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error deleting book: " + e.getMessage(),
+                        "Delete Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
-    public void showError(String message) {
-        JOptionPane.showMessageDialog(this, message, "Error", JOptionPane.ERROR_MESSAGE);
+    private GridBagConstraints createDialogConstraints() {
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        return gbc;
     }
 
-    public void showSuccess(String message) {
-        JOptionPane.showMessageDialog(this, message, "Success", JOptionPane.INFORMATION_MESSAGE);
+    private void addDialogComponent(JDialog dialog, String label, JComponent component,
+                                    GridBagConstraints gbc, int row) {
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.gridwidth = 1;
+        dialog.add(new JLabel(label), gbc);
+
+        gbc.gridx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        dialog.add(component, gbc);
     }
 }
